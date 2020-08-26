@@ -11,12 +11,12 @@ from copy import deepcopy
 
 #list of all project file names
 file_names = []
-#row for statistics file containing the results
+#row for results file
 statistics_row = []
 
 def main():
     global statistics_row, file_names
-    #list of all projects
+    #list of all projects and their names
     files = load_all_data()
     file_names = [x[0] for x in files]
     files = [x[1] for x in files]
@@ -24,29 +24,28 @@ def main():
     #iterate through all files in release level data
     for project_index in range(398):
         print('Project:',project_index, 'in process...')
-        #csv file named statistics for saving results
-        statistics = pd.read_csv('statistics2-sorted.csv')
+        #csv file named results for saving results
+        statistics = pd.read_csv('results.csv')
         #current project name
         print(file_names[project_index])
         #target project for predictions
         target = pd.DataFrame(files[project_index])
-        #adding target name to statistics
+        #adding target name to results
         statistics_row.append(file_names[project_index])
         #removing target project from training data
         current_target = files.pop(project_index)
         #concatenating list elements to data frame object
         con_data = pd.concat(files)
-        #pd.concat([statistics['file'],pd.DataFrame(file_names)], axis=1).to_csv('vergleich.csv')
 
         #starting preprocessing data and predicting
         start(con_data,target)
 
         columns = statistics.columns
-        #adding data from current project to statistics
+        #adding data from current project to results
         row = pd.DataFrame([statistics_row], columns=columns)
         statistics = statistics.append(row)
         #saving file
-        statistics.to_csv('statistics2-sorted.csv', index=False)
+        statistics.to_csv('results.csv', index=False)
         #clearing row for next iteration
         statistics_row.clear()
         #putting target back to file list
@@ -74,7 +73,6 @@ def load_all_data():
         else:
             #continue if file doesn't end with .csv
             continue
-
     return sorted(files, key=lambda x: x[0])
 
 #select 20 artifacts from whole data per artifact in target project using Nearest neighbor algorithm
@@ -131,7 +129,7 @@ def knn(data, labels, test_data):
 def preprocessing(data,target):
     global statistics_row
     print('Start preprocessing')
-    data = data.drop('imports', axis='columns') #w
+    data = data.drop('imports', axis='columns')
     target = target.drop('imports', axis='columns')
     labels = data['BUGFIX_count']>0
     test_labels = target['BUGFIX_count']>0
@@ -142,16 +140,19 @@ def preprocessing(data,target):
                                 target.iloc[:, :target.columns.get_loc('BUGFIX_count')])
     lb_infinite = False
     try:
+        #if no defects predicted exception through division by zero
         lb = lower_bound(predictions, test_loc, test_labels)
     except Exception as e:
         print(e)
+        #lower bound infinite
         statistics_row.append(-1)
         lb_infinite = True
-        print('RF1:', 'lb infinite')
+        print('RF-b:', 'lb infinite')
 
     if not lb_infinite:
         try:
             ub = upper_bound(predictions, test_loc, test_labels)
+            #scaling difference depending on positivity or negativity
             if(ub-lb)<0:
                 statistics_row.append(-(abs(ub - lb) / (abs(ub - lb) + 1000)))
             else:
@@ -160,8 +161,9 @@ def preprocessing(data,target):
 
         except Exception as e:
             print(e)
+            #upper bound infinite
             statistics_row.append(1)
-            print('RF1:','ub infinite')
+            print('RF-b:','ub infinite')
 
     #selecting features with random forest
     features = select_features_rf(data.iloc[:, :data.columns.get_loc('BUGFIX_count')], labels)
@@ -174,7 +176,7 @@ def preprocessing(data,target):
         scaler = FunctionTransformer(func=lambda x: (np.e ** x) /((np.e ** x) + 1), validate=True)
     except RuntimeWarning as e:
         print(e)
-    #applying sigoid function on data
+    #applying sigmoid function on data
     data = pd.DataFrame(scaler.fit_transform(data), columns=columns).fillna(0)
     test_data = pd.DataFrame(scaler.fit_transform(test_data),columns=columns).fillna(0)
 
@@ -194,6 +196,7 @@ def start(raw_data, target):
     station = time.time()
     print('Start fitting after',station-start,'secs')
 
+    #predicting results with KNN
     predictions1 = knn(data, labels, test_data)
     lb_infinite = False
     try:
@@ -217,6 +220,7 @@ def start(raw_data, target):
             statistics_row.append(1)
             print('KNN:',' ub infinite')
 
+    #predicting results with RF
     predictions2 = random_forest(data, labels, test_data)
     lb_infinite = False
     try:
@@ -224,13 +228,13 @@ def start(raw_data, target):
     except Exception as e:
         print(e)
         statistics_row.append(-1)
-        print('RF:', 'lb infinite')
+        print('RF-a:', 'lb infinite')
         lb_infinite = True
 
     if not lb_infinite:
         try:
             ub = upper_bound(predictions2, test_loc, test_labels)
-            print('RF:', lb, '< C <', ub)
+            print('RF-a:', lb, '< C <', ub)
             if (ub - lb) < 0:
                 statistics_row.append(-(abs(ub - lb) / (abs(ub - lb) + 1000)))
             else:
@@ -238,8 +242,7 @@ def start(raw_data, target):
         except Exception as e :
             print(e)
             statistics_row.append(1)
-            print('RF:','ub infinite')
-
+            print('RF-a:','ub infinite')
 
     end = time.time()
     print('Ended after',end-start,'secs')
